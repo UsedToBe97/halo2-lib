@@ -39,7 +39,7 @@ struct CircuitParams {
     num_limbs: usize,
 }
 
-pub struct ECDSACircuit<F> {
+pub struct ECDSAMultiCircuit<F> {
     pub r: Vec<Option<Fq>>,
     pub s: Vec<Option<Fq>>,
     pub msghash: Vec<Option<Fq>>,
@@ -47,20 +47,20 @@ pub struct ECDSACircuit<F> {
     pub G: Vec<Secp256k1Affine>,
     pub _marker: PhantomData<F>,
 }
-impl<F: PrimeField> Default for ECDSACircuit<F> {
+impl<F: PrimeField> Default for ECDSAMultiCircuit<F> {
     fn default() -> Self {
         Self {
-            r: vec![None; 10],
-            s: vec![None; 10],
-            msghash: vec![None; 10],
-            pk: vec![None; 10],
-            G: vec![Secp256k1Affine::generator(); 10],
+            r: vec![None; 2],
+            s: vec![None; 2],
+            msghash: vec![None; 2],
+            pk: vec![None; 2],
+            G: vec![Secp256k1Affine::generator(); 2],
             _marker: PhantomData,
         }
     }
 }
 
-impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
+impl<F: PrimeField> Circuit<F> for ECDSAMultiCircuit<F> {
     type Config = FpChip<F>;
     type FloorPlanner = SimpleFloorPlanner;
 
@@ -70,7 +70,7 @@ impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
 
     fn configure(meta: &mut ConstraintSystem<F>) -> Self::Config {
         let path = var("ECDSA_CONFIG")
-            .unwrap_or_else(|_| "./src/secp256k1/configs/ecdsa_circuit.config".to_string());
+            .unwrap_or_else(|_| "./src/secp256k1/configs/ecdsa_multi_circuit.config".to_string());
         let params: CircuitParams = serde_json::from_reader(
             File::open(&path).unwrap_or_else(|_| panic!("{path:?} file should exist")),
         )
@@ -104,21 +104,19 @@ impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
         let _lookup_bits = fp_chip.range.lookup_bits;
         let _num_advice = fp_chip.range.gate.num_advice;
 
-        let mut res = Ok(());
-        for idx in 0..10 {
-            let mut first_pass = SKIP_FIRST_PASS;
-            // ECDSA verify
-            res = layouter.assign_region(
-                || "ECDSA",
-                |region| {
-                    if first_pass {
-                        first_pass = false;
-                        return Ok(());
-                    }
+        let mut first_pass = SKIP_FIRST_PASS;
+        // ECDSA verify 2 times
+        layouter.assign_region(
+            || "ECDSA 2 times",
+            |region| {
+                if first_pass {
+                    first_pass = false;
+                    return Ok(());
+                }
 
-                    let mut aux = fp_chip.new_context(region);
-                    let ctx = &mut aux;
-
+                let mut aux = fp_chip.new_context(region);
+                let ctx = &mut aux;
+                for i in 0..2 {
                     let (r_assigned, s_assigned, m_assigned) = {
                         let fq_chip = FpConfig::<F, Fq>::construct(
                             fp_chip.range.clone(),
@@ -130,20 +128,20 @@ impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
                         let m_assigned = fq_chip.load_private(
                             ctx,
                             FpConfig::<F, Fq>::fe_to_witness(
-                                &self.msghash[idx].map_or(Value::unknown(), Value::known),
+                                &self.msghash[i].map_or(Value::unknown(), Value::known),
                             ),
                         );
 
                         let r_assigned = fq_chip.load_private(
                             ctx,
                             FpConfig::<F, Fq>::fe_to_witness(
-                                &self.r[idx].map_or(Value::unknown(), Value::known),
+                                &self.r[i].map_or(Value::unknown(), Value::known),
                             ),
                         );
                         let s_assigned = fq_chip.load_private(
                             ctx,
                             FpConfig::<F, Fq>::fe_to_witness(
-                                &self.s[idx].map_or(Value::unknown(), Value::known),
+                                &self.s[i].map_or(Value::unknown(), Value::known),
                             ),
                         );
                         (r_assigned, s_assigned, m_assigned)
@@ -153,8 +151,8 @@ impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
                     let pk_assigned = ecc_chip.load_private(
                         ctx,
                         (
-                            self.pk[idx].map_or(Value::unknown(), |pt| Value::known(pt.x)),
-                            self.pk[idx].map_or(Value::unknown(), |pt| Value::known(pt.y)),
+                            self.pk[i].map_or(Value::unknown(), |pt| Value::known(pt.x)),
+                            self.pk[i].map_or(Value::unknown(), |pt| Value::known(pt.y)),
                         ),
                     );
                     // test ECDSA
@@ -174,17 +172,111 @@ impl<F: PrimeField> Circuit<F> for ECDSACircuit<F> {
                     fp_chip.finalize(ctx);
 
                     #[cfg(feature = "display")]
-                    if self.r[idx].is_some() {
-                        // println!("ECDSA res {ecdsa:?}");
+                    if self.r[i].is_some() {
+                        println!("ECDSA res {ecdsa:?}");
 
                         ctx.print_stats(&["Range"]);
                     }
-                    Ok(())
-                },
-            );
-        }
-        res
+                }
+                Ok(())
+            },
+        )
     }
+
+
+    // fn synthesize(
+    //     &self,
+    //     fp_chip: Self::Config,
+    //     mut layouter: impl Layouter<F>,
+    // ) -> Result<(), Error> {
+    //     fp_chip.range.load_lookup_table(&mut layouter)?;
+
+    //     let limb_bits = fp_chip.limb_bits;
+    //     let num_limbs = fp_chip.num_limbs;
+    //     let _num_fixed = fp_chip.range.gate.constants.len();
+    //     let _lookup_bits = fp_chip.range.lookup_bits;
+    //     let _num_advice = fp_chip.range.gate.num_advice;
+
+    //     let mut res = Ok(());
+    //     let mut aux = fp_chip.new_context(region);
+    //     let ctx = &mut aux;
+    //     for idx in 0..2 {
+    //         let mut first_pass = SKIP_FIRST_PASS;
+    //         // ECDSA verify
+    //         res = layouter.assign_region(
+    //             || "ECDSA",
+    //             |region| {
+    //                 if first_pass {
+    //                     first_pass = false;
+    //                     return Ok(());
+    //                 }
+
+    //                 let (r_assigned, s_assigned, m_assigned) = {
+    //                     let fq_chip = FpConfig::<F, Fq>::construct(
+    //                         fp_chip.range.clone(),
+    //                         limb_bits,
+    //                         num_limbs,
+    //                         modulus::<Fq>(),
+    //                     );
+
+    //                     let m_assigned = fq_chip.load_private(
+    //                         ctx,
+    //                         FpConfig::<F, Fq>::fe_to_witness(
+    //                             &self.msghash[idx].map_or(Value::unknown(), Value::known),
+    //                         ),
+    //                     );
+
+    //                     let r_assigned = fq_chip.load_private(
+    //                         ctx,
+    //                         FpConfig::<F, Fq>::fe_to_witness(
+    //                             &self.r[idx].map_or(Value::unknown(), Value::known),
+    //                         ),
+    //                     );
+    //                     let s_assigned = fq_chip.load_private(
+    //                         ctx,
+    //                         FpConfig::<F, Fq>::fe_to_witness(
+    //                             &self.s[idx].map_or(Value::unknown(), Value::known),
+    //                         ),
+    //                     );
+    //                     (r_assigned, s_assigned, m_assigned)
+    //                 };
+
+    //                 let ecc_chip = EccChip::<F, FpChip<F>>::construct(fp_chip.clone());
+    //                 let pk_assigned = ecc_chip.load_private(
+    //                     ctx,
+    //                     (
+    //                         self.pk[idx].map_or(Value::unknown(), |pt| Value::known(pt.x)),
+    //                         self.pk[idx].map_or(Value::unknown(), |pt| Value::known(pt.y)),
+    //                     ),
+    //                 );
+    //                 // test ECDSA
+    //                 let ecdsa = ecdsa_verify_no_pubkey_check::<F, Fp, Fq, Secp256k1Affine>(
+    //                     &ecc_chip.field_chip,
+    //                     ctx,
+    //                     &pk_assigned,
+    //                     &r_assigned,
+    //                     &s_assigned,
+    //                     &m_assigned,
+    //                     4,
+    //                     4,
+    //                 );
+
+    //                 // IMPORTANT: this copies cells to the lookup advice column to perform range check lookups
+    //                 // This is not optional.
+    //                 fp_chip.finalize(ctx);
+
+    //                 #[cfg(feature = "display")]
+    //                 if self.r[idx].is_some() {
+    //                     // println!("ECDSA res {ecdsa:?}");
+
+    //                     ctx.print_stats(&["Range"]);
+    //                 }
+    //                 Ok(())
+    //             },
+    //         );
+    //     }
+    //     res
+    // }
 }
 
 // #[cfg(test)]
@@ -247,12 +339,12 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
     let mut folder = std::path::PathBuf::new();
     folder.push("./src/secp256k1");
 
-    folder.push("configs/bench_ecdsa.config");
+    folder.push("configs/bench_ecdsa_multi.config");
     let bench_params_file = std::fs::File::open(folder.as_path()).unwrap();
     folder.pop();
     folder.pop();
 
-    folder.push("results/ecdsa_bench.csv");
+    folder.push("results/ecdsa_multi_bench.csv");
     let mut fs_results = std::fs::File::create(folder.as_path()).unwrap();
     folder.pop();
     folder.pop();
@@ -272,7 +364,7 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
 
         {
             folder.pop();
-            folder.push("configs/ecdsa_circuit.tmp.config");
+            folder.push("configs/ecdsa_multi_circuit.tmp.config");
             set_var("ECDSA_CONFIG", &folder);
             let mut f = std::fs::File::create(folder.as_path())?;
             write!(f, "{}", serde_json::to_string(&bench_params).unwrap())?;
@@ -282,7 +374,7 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
         }
         let params_time = start_timer!(|| "Time elapsed in circuit & params construction");
         let params = gen_srs(bench_params.degree);
-        let circuit = ECDSACircuit::<Fr>::default();
+        let circuit = ECDSAMultiCircuit::<Fr>::default();
         end_timer!(params_time);
 
         let vk_time = start_timer!(|| "Time elapsed in generating vkey");
@@ -298,7 +390,7 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
         let mut msg_hash_vec = vec![];
         let mut pubkey_vec = vec![];
         let mut G_vec = vec![];
-        for _ in 0..10 {
+        for _ in 0..2 {
             // generate random pub key and sign random message
             let G = Secp256k1Affine::generator();
             let sk = <Secp256k1Affine as CurveAffine>::ScalarExt::random(OsRng);
@@ -320,7 +412,7 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
             G_vec.push(G);
         }
 
-        let proof_circuit = ECDSACircuit::<Fr> {
+        let proof_circuit = ECDSAMultiCircuit::<Fr> {
             r: r_vec,
             s: s_vec,
             msghash: msg_hash_vec,
@@ -339,14 +431,14 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
             Challenge255<G1Affine>,
             _,
             Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
-            ECDSACircuit<Fr>,
+            ECDSAMultiCircuit<Fr>,
         >(&params, &pk, &[proof_circuit], &[&[]], &mut rng, &mut transcript)?;
         let proof = transcript.finalize();
         end_timer!(proof_time);
 
         let proof_size = {
             folder.push(format!(
-                "ecdsa_circuit_proof_{}_{}_{}_{}_{}_{}_{}.data",
+                "ecdsa_multi_circuit_proof_{}_{}_{}_{}_{}_{}_{}.data",
                 bench_params.degree,
                 bench_params.num_advice,
                 bench_params.num_lookup_advice,
