@@ -50,11 +50,11 @@ pub struct ECDSAMultiCircuit<F> {
 impl<F: PrimeField> Default for ECDSAMultiCircuit<F> {
     fn default() -> Self {
         Self {
-            r: vec![None; 2],
-            s: vec![None; 2],
-            msghash: vec![None; 2],
-            pk: vec![None; 2],
-            G: vec![Secp256k1Affine::generator(); 2],
+            r: vec![None; 100],
+            s: vec![None; 100],
+            msghash: vec![None; 100],
+            pk: vec![None; 100],
+            G: vec![Secp256k1Affine::generator(); 100],
             _marker: PhantomData,
         }
     }
@@ -105,9 +105,9 @@ impl<F: PrimeField> Circuit<F> for ECDSAMultiCircuit<F> {
         let _num_advice = fp_chip.range.gate.num_advice;
 
         let mut first_pass = SKIP_FIRST_PASS;
-        // ECDSA verify 2 times
+        // ECDSA verify 100 times
         layouter.assign_region(
-            || "ECDSA 2 times",
+            || "ECDSA 100 times",
             |region| {
                 if first_pass {
                     first_pass = false;
@@ -116,7 +116,7 @@ impl<F: PrimeField> Circuit<F> for ECDSAMultiCircuit<F> {
 
                 let mut aux = fp_chip.new_context(region);
                 let ctx = &mut aux;
-                for i in 0..2 {
+                for i in 0..100 {
                     let (r_assigned, s_assigned, m_assigned) = {
                         let fq_chip = FpConfig::<F, Fq>::construct(
                             fp_chip.range.clone(),
@@ -166,18 +166,17 @@ impl<F: PrimeField> Circuit<F> for ECDSAMultiCircuit<F> {
                         4,
                         4,
                     );
-
-                    // IMPORTANT: this copies cells to the lookup advice column to perform range check lookups
-                    // This is not optional.
-                    fp_chip.finalize(ctx);
-
                     #[cfg(feature = "display")]
                     if self.r[i].is_some() {
                         println!("ECDSA res {ecdsa:?}");
-
-                        ctx.print_stats(&["Range"]);
                     }
                 }
+                // IMPORTANT: this copies cells to the lookup advice column to perform range check lookups
+                // This is not optional.
+                fp_chip.finalize(ctx);
+
+                #[cfg(feature = "display")]
+                ctx.print_stats(&["Range"]);
                 Ok(())
             },
         )
@@ -200,7 +199,7 @@ impl<F: PrimeField> Circuit<F> for ECDSAMultiCircuit<F> {
     //     let mut res = Ok(());
     //     let mut aux = fp_chip.new_context(region);
     //     let ctx = &mut aux;
-    //     for idx in 0..2 {
+    //     for idx in 0..4 {
     //         let mut first_pass = SKIP_FIRST_PASS;
     //         // ECDSA verify
     //         res = layouter.assign_region(
@@ -344,7 +343,8 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
     folder.pop();
     folder.pop();
 
-    folder.push("results/ecdsa_multi_bench.csv");
+    let num_sig = 100; // Replace this with the actual value
+    folder.push(format!("results/ecdsa_multi_bench_{}.csv", num_sig));
     let mut fs_results = std::fs::File::create(folder.as_path()).unwrap();
     folder.pop();
     folder.pop();
@@ -390,7 +390,7 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
         let mut msg_hash_vec = vec![];
         let mut pubkey_vec = vec![];
         let mut G_vec = vec![];
-        for _ in 0..2 {
+        for _ in 0..100 {
             // generate random pub key and sign random message
             let G = Secp256k1Affine::generator();
             let sk = <Secp256k1Affine as CurveAffine>::ScalarExt::random(OsRng);
@@ -452,6 +452,7 @@ fn bench_secp256k1_ecdsa_multi() -> Result<(), Box<dyn std::error::Error>> {
             fd.write_all(&proof).unwrap();
             fd.metadata().unwrap().len()
         };
+        println!("proof_size {:?}", proof_size);
 
         let verify_time = start_timer!(|| "Verify time");
         let verifier_params = params.verifier_params();
