@@ -225,7 +225,7 @@ fn test_secp256k1_ecdsa() {
 #[cfg(test)]
 #[test]
 fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
-    use halo2_base::utils::fs::gen_srs;
+    use halo2_base::{utils::fs::gen_srs, halo2_proofs::poly::kzg::commitment::ParamsKZG};
 
     use crate::halo2_proofs::{
         poly::kzg::{
@@ -235,7 +235,13 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
         },
         transcript::{TranscriptReadBuffer, TranscriptWriterBuffer},
     };
-    use std::{env::set_var, fs, io::BufRead};
+    use std::{env::set_var, fs, io::BufRead, rc::Rc};
+
+    use snark_verifier::{
+        loader::evm::{encode_calldata, Address, EvmLoader, ExecutorBuilder, self},
+        pcs::kzg::{Gwc19, KzgAs},
+        system::halo2::{compile, transcript::evm::EvmTranscript, Config}, verifier::{self, SnarkVerifier},
+    };
 
     let _rng = OsRng;
 
@@ -373,6 +379,62 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
             proof_size,
             verify_time.time.elapsed()
         )?;
+
+
+        type PlonkVerifier = verifier::plonk::PlonkVerifier<KzgAs<Bn256, Gwc19>>;
+
+        fn gen_evm_verifier(
+            params: &ParamsKZG<Bn256>,
+            vk: &VerifyingKey<G1Affine>,
+            num_instance: Vec<usize>,
+        ) -> Vec<u8> {
+            let protocol = compile(
+                params,
+                vk,
+                Config::kzg().with_num_instance(num_instance.clone()),
+            );
+            let vk = (params.get_g()[0], params.g2(), params.s_g2()).into();
+
+            let loader = EvmLoader::new::<Fq, Fr>();
+            let protocol = protocol.loaded(&loader);
+            let mut transcript = EvmTranscript::<_, Rc<EvmLoader>, _, _>::new(&loader);
+
+            let instances = transcript.load_instances(num_instance);
+            let proof = PlonkVerifier::read_proof(&vk, &protocol, &instances, &mut transcript).unwrap();
+            PlonkVerifier::verify(&vk, &protocol, &instances, &proof).unwrap();
+
+            evm::compile_yul(&loader.yul_code())
+        }
+
+        fn evm_verify(deployment_code: Vec<u8>, instances: Vec<Vec<Fr>>, proof: Vec<u8>) {
+            let mut calldata = encode_calldata(&instances, &proof);
+            let success = {
+                let mut evm = ExecutorBuilder::default()
+                    .with_gas_limit(u64::MAX.into())
+                    .build();
+
+                let caller = Address::from_low_u64_be(0xfe);
+                // println!("{:?}", evm.deploy(caller, deployment_code.clone().into(), 0.into()));
+                let verifier = evm
+                    .deploy(caller, deployment_code.clone().into(), 0.into())
+                    .address
+                    .unwrap();
+                println!("deployment_code: {:?}", deployment_code.iter().map(|b| format!("{:02x}", b).to_string()).collect::<Vec<String>>().join(""));
+                println!("calldata: {:?}", calldata.iter().map(|b| format!("{:02x}", b).to_string()).collect::<Vec<String>>().join(""));
+                // calldata[1] += 1;
+                let result = evm.call_raw(caller, verifier, calldata.into(), 0.into());
+
+                dbg!(result.gas_used);
+
+                !result.reverted
+            };
+            assert!(success);
+        }
+
+        let deployment_code = gen_evm_verifier(&params, pk.get_vk(), vec![0]);
+
+        // let proof = gen_proof(&params, &pk, circuit.clone(), circuit.instances());
+        evm_verify(deployment_code, vec![vec![]], proof);
     }
     Ok(())
 }

@@ -18,3 +18,5 @@ Cargo.lock
 
 *.csv
 *.srs
+
+*.data
