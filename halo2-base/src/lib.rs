@@ -468,7 +468,7 @@ impl<'a, F: ScalarField> Context<'a, F> {
                 cell: self
                     .region
                     .assign_advice(|| "", column, row_offset, || value)
-                    .expect("assign advice should not fail")
+                    .expect(format!("assign advice should not fail column: {:?}, row_offset: {:?}, phase: {:?}", column, row_offset, phase).as_str())
                     .cell(),
                 value,
                 row_offset,

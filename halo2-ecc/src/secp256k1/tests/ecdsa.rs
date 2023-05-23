@@ -488,6 +488,8 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
 
                 dbg!(result.gas_used);
 
+                println!("result: {:?}", result);
+
                 !result.reverted
             };
             assert!(success);
@@ -495,7 +497,16 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
 
         let deployment_code = gen_evm_verifier(&params, pk.get_vk(), vec![0]);
 
-        let evm_proof = gen_proof(&params, &pk, circuit, vec![]);
+        let proof_circuit = ECDSACircuit::<Fr> {
+            r: Some(r),
+            s: Some(s),
+            msghash: Some(msg_hash),
+            pk: Some(pubkey),
+            G,
+            _marker: PhantomData,
+        };
+
+        let evm_proof = gen_proof(&params, &pk, proof_circuit, vec![]);
         evm_verify(deployment_code, vec![], evm_proof);
     }
     Ok(())
