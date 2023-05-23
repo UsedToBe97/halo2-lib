@@ -495,7 +495,7 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
             assert!(success);
         }
 
-        let deployment_code = gen_evm_verifier(&params, pk.get_vk(), vec![0]);
+        let deployment_code = gen_evm_verifier(&params, pk.get_vk(), vec![]);
 
         let proof_circuit = ECDSACircuit::<Fr> {
             r: Some(r),
