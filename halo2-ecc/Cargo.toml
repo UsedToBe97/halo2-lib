@@ -20,6 +20,20 @@ group = "0.12"
 
 halo2-base = { path = "../halo2-base", default-features = false }
 
+# loader_evm
+sha3 = { version = "0.10", optional = true }
+bytes = { version = "1.1.0", default-features = false, optional = true }
+primitive-types = { version = "0.12.1", default-features = false, features = ["std"], optional = true }
+rlp = { version = "0.5.2", default-features = false, features = ["std"], optional = true }
+revm = { version = "= 2.3.1", optional = true }
+
+# loader_halo2
+halo2_wrong_ecc = { git = "https://github.com/privacy-scaling-explorations/halo2wrong", tag = "v2023_02_02", package = "ecc", optional = true }
+poseidon = { git = "https://github.com/privacy-scaling-explorations/poseidon", tag = "v2022_10_22", optional = true }
+# system_halo2
+halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_02_02", optional = true }
+
+
 [dev-dependencies]
 ark-std = { version = "0.3.0", features = ["print-trace"] }
 pprof = { version = "0.11", features = ["criterion", "flamegraph"] }
@@ -29,13 +43,16 @@ snark-verifier = { git = "https://github.com/privacy-scaling-explorations/snark-
 halo2_curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "0.3.1", package = "halo2curves" }
 
 [features]
-default = ["jemallocator", "halo2-pse", "display"]
+default = ["jemallocator", "halo2-pse", "display", "loader_evm", "loader_halo2", "system_halo2"]
 dev-graph = ["halo2-base/dev-graph"]
 display = ["halo2-base/display"]
 halo2-pse = ["halo2-base/halo2-pse"]
 halo2-axiom = ["halo2-base/halo2-axiom"]
 jemallocator = ["halo2-base/jemallocator"]
 mimalloc = ["halo2-base/mimalloc"]
+loader_evm = ["dep:bytes", "dep:sha3", "dep:primitive-types", "dep:rlp", "dep:revm"]
+loader_halo2 = ["dep:halo2_proofs", "dep:halo2_wrong_ecc", "dep:poseidon"]
+system_halo2 = ["dep:halo2_proofs"]
 
 [[bench]]
 name = "fp_mul"
