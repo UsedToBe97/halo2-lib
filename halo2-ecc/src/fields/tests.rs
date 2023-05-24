@@ -395,7 +395,20 @@ mod fp12 {
             MyCircuit::<Fr> { a: Value::known(a), b: Value::known(b), _marker: PhantomData };
 
         let evm_proof = gen_proof(&params, &pk, proof_circuit, vec![]);
+        evm_verify(deployment_code.clone(), vec![], evm_proof);
+
+
+
+        let a = Fq12::random(&mut rng);
+        let b = Fq12::random(&mut rng);
+
+        let proof_circuit =
+            MyCircuit::<Fr> { a: Value::known(a), b: Value::known(b), _marker: PhantomData };
+
+        let evm_proof = gen_proof(&params, &pk, proof_circuit, vec![]);
         evm_verify(deployment_code, vec![], evm_proof);
+
+
         Ok(())
     }
 
