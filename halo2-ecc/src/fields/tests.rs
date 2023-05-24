@@ -142,9 +142,19 @@ mod fp12 {
         halo2curves::bn256::{Fq, Fq12, Fr},
         plonk::*,
     };
-    use halo2_base::utils::modulus;
+    use ark_std::{start_timer, end_timer};
+    use halo2_base::utils::{modulus, fs::gen_srs};
     use halo2_base::{utils::PrimeField, SKIP_FIRST_PASS};
-    use std::marker::PhantomData;
+    use halo2_curves::bn256::{Bn256, G1Affine};
+    use halo2_proofs::{poly::{kzg::{commitment::{ParamsKZG, KZGCommitmentScheme}, multiopen::{ProverGWC, VerifierGWC}, strategy::AccumulatorStrategy}, commitment::{Params, ParamsProver}, VerificationStrategy}, transcript::{TranscriptWriterBuffer, TranscriptReadBuffer}};
+    use itertools::Itertools;
+    use rand_core::OsRng;
+    use snark_verifier::{
+        loader::evm::{encode_calldata, Address, EvmLoader, ExecutorBuilder, self},
+        pcs::kzg::{Gwc19, KzgAs},
+        system::halo2::{compile, transcript::evm::EvmTranscript, Config}, verifier::{self, SnarkVerifier},
+    };
+    use std::{marker::PhantomData, rc::Rc};
 
     #[derive(Default)]
     struct MyCircuit<F> {
@@ -249,6 +259,144 @@ mod fp12 {
         let prover = MockProver::run(k, &circuit, vec![]).unwrap();
         prover.assert_satisfied();
         // assert_eq!(prover.verify(), Ok(()));
+    }
+
+    #[test]
+    fn test_fp12_on_chain() -> Result<(), Box<dyn std::error::Error>> {
+        let k = 23;
+        let mut rng = rand::thread_rng();
+        let a = Fq12::random(&mut rng);
+        let b = Fq12::random(&mut rng);
+
+        let circuit =
+            MyCircuit::<Fr> { a: Value::known(a), b: Value::known(b), _marker: PhantomData };
+
+        let prover = MockProver::run(k, &circuit, vec![]).unwrap();
+        prover.assert_satisfied();
+
+        let params_time = start_timer!(|| "Time elapsed in circuit & params construction");
+        let params = gen_srs(k);
+        let circuit = MyCircuit::<Fr>::default();
+        end_timer!(params_time);
+
+        let vk_time = start_timer!(|| "Time elapsed in generating vkey");
+        let vk = keygen_vk(&params, &circuit)?;
+        end_timer!(vk_time);
+
+        let pk_time = start_timer!(|| "Time elapsed in generating pkey");
+        let pk = keygen_pk(&params, vk, &circuit)?;
+        end_timer!(pk_time);
+        // assert_eq!(prover.verify(), Ok(()));
+
+        type PlonkVerifier = verifier::plonk::PlonkVerifier<KzgAs<Bn256, Gwc19>>;
+
+        fn gen_proof<C: Circuit<Fr>>(
+            params: &ParamsKZG<Bn256>,
+            pk: &ProvingKey<G1Affine>,
+            circuit: C,
+            instances: Vec<Vec<Fr>>,
+        ) -> Vec<u8> {
+            let cs = pk.get_vk().cs();
+            println!("num_instance_columns: {:?}", cs.num_instance_columns());
+            println!("params.k() {:?}", params.k());
+            MockProver::run(params.k(), &circuit, instances.clone())
+                .unwrap()
+                .assert_satisfied();
+
+            let instances = instances
+                .iter()
+                .map(|instances| instances.as_slice())
+                .collect_vec();
+            let proof = {
+                let mut transcript = TranscriptWriterBuffer::<_, G1Affine, _>::init(Vec::new());
+                create_proof::<KZGCommitmentScheme<Bn256>, ProverGWC<_>, _, _, EvmTranscript<_, _, _, _>, _>(
+                    params,
+                    pk,
+                    &[circuit],
+                    &[instances.as_slice()],
+                    OsRng,
+                    &mut transcript,
+                )
+                .unwrap();
+                transcript.finalize()
+            };
+
+            let accept = {
+                let mut transcript = TranscriptReadBuffer::<_, G1Affine, _>::init(proof.as_slice());
+                VerificationStrategy::<_, VerifierGWC<_>>::finalize(
+                    verify_proof::<_, VerifierGWC<_>, _, EvmTranscript<_, _, _, _>, _>(
+                        params.verifier_params(),
+                        pk.get_vk(),
+                        AccumulatorStrategy::new(params.verifier_params()),
+                        &[instances.as_slice()],
+                        &mut transcript,
+                    )
+                    .unwrap(),
+                )
+            };
+            assert!(accept);
+
+            proof
+        }
+
+        fn gen_evm_verifier(
+            params: &ParamsKZG<Bn256>,
+            vk: &VerifyingKey<G1Affine>,
+            num_instance: Vec<usize>,
+        ) -> Vec<u8> {
+            let protocol = compile(
+                params,
+                vk,
+                Config::kzg().with_num_instance(num_instance.clone()),
+            );
+            let vk = (params.get_g()[0], params.g2(), params.s_g2()).into();
+
+            let loader = EvmLoader::new::<Fq, Fr>();
+            let protocol = protocol.loaded(&loader);
+            let mut transcript = EvmTranscript::<_, Rc<EvmLoader>, _, _>::new(&loader);
+
+            let instances = transcript.load_instances(num_instance);
+            let proof = PlonkVerifier::read_proof(&vk, &protocol, &instances, &mut transcript).unwrap();
+            PlonkVerifier::verify(&vk, &protocol, &instances, &proof).unwrap();
+
+            evm::compile_yul(&loader.yul_code())
+        }
+
+        fn evm_verify(deployment_code: Vec<u8>, instances: Vec<Vec<Fr>>, proof: Vec<u8>) {
+            let mut calldata = encode_calldata(&instances, &proof);
+            let success = {
+                let mut evm = ExecutorBuilder::default()
+                    .with_gas_limit(u64::MAX.into())
+                    .build();
+
+                let caller = Address::from_low_u64_be(0xfe);
+                // println!("{:?}", evm.deploy(caller, deployment_code.clone().into(), 0.into()));
+                let verifier = evm
+                    .deploy(caller, deployment_code.clone().into(), 0.into())
+                    .address
+                    .unwrap();
+                println!("deployment_code: {:?}", deployment_code.iter().map(|b| format!("{:02x}", b).to_string()).collect::<Vec<String>>().join(""));
+                println!("calldata: {:?}", calldata.iter().map(|b| format!("{:02x}", b).to_string()).collect::<Vec<String>>().join(""));
+                // calldata[1] += 1;
+                let result = evm.call_raw(caller, verifier, calldata.into(), 0.into());
+
+                dbg!(result.gas_used);
+
+                // println!("result: {:?}", result);
+
+                !result.reverted
+            };
+            assert!(success);
+        }
+
+        let deployment_code = gen_evm_verifier(&params, pk.get_vk(), vec![]);
+
+        let proof_circuit =
+            MyCircuit::<Fr> { a: Value::known(a), b: Value::known(b), _marker: PhantomData };
+
+        let evm_proof = gen_proof(&params, &pk, proof_circuit, vec![]);
+        evm_verify(deployment_code, vec![], evm_proof);
+        Ok(())
     }
 
     #[cfg(feature = "dev-graph")]
