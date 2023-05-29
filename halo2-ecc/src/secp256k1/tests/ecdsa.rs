@@ -457,7 +457,7 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
             );
             let vk = (params.get_g()[0], params.g2(), params.s_g2()).into();
 
-            let loader = EvmLoader::new::<Fq, Fr>();
+            let loader = EvmLoader::new::<halo2_curves::bn256::Fq, Fr>();
             let protocol = protocol.loaded(&loader);
             let mut transcript = EvmTranscript::<_, Rc<EvmLoader>, _, _>::new(&loader);
 
@@ -487,8 +487,6 @@ fn bench_secp256k1_ecdsa() -> Result<(), Box<dyn std::error::Error>> {
                 let result = evm.call_raw(caller, verifier, calldata.into(), 0.into());
 
                 dbg!(result.gas_used);
-
-                println!("result: {:?}", result);
 
                 !result.reverted
             };
