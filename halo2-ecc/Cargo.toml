@@ -32,6 +32,8 @@ halo2_wrong_ecc = { git = "https://github.com/privacy-scaling-explorations/halo2
 poseidon = { git = "https://github.com/privacy-scaling-explorations/poseidon", tag = "v2022_10_22", optional = true }
 # system_halo2
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_02_02", optional = true }
+snark-verifier = { git = "https://github.com/privacy-scaling-explorations/snark-verifier", tag = "v2023_02_02" }
+halo2_curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "0.3.1", package = "halo2curves" }
 
 
 [dev-dependencies]
@@ -39,8 +41,6 @@ ark-std = { version = "0.3.0", features = ["print-trace"] }
 pprof = { version = "0.11", features = ["criterion", "flamegraph"] }
 criterion = "0.4"
 criterion-macro = "0.4"
-snark-verifier = { git = "https://github.com/privacy-scaling-explorations/snark-verifier", tag = "v2023_02_02" }
-halo2_curves = { git = "https://github.com/privacy-scaling-explorations/halo2curves", tag = "0.3.1", package = "halo2curves" }
 
 [features]
 default = ["jemallocator", "halo2-pse", "display", "loader_evm", "loader_halo2", "system_halo2"]
