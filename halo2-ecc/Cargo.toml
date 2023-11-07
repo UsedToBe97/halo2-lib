@@ -30,11 +30,11 @@ criterion-macro = "=0.4"
 halo2-base = { path = "../halo2-base", default-features = false, features = ["test-utils"] }
 
 [features]
-default = ["jemallocator", "halo2-axiom", "display"]
-dev-graph = ["halo2-base/dev-graph"]
+default = ["jemallocator", "halo2-pse", "display"]
+#dev-graph = ["halo2-base/dev-graph"]
 display = ["halo2-base/display"]
 halo2-pse = ["halo2-base/halo2-pse"]
-halo2-axiom = ["halo2-base/halo2-axiom"]
+#halo2-axiom = ["halo2-base/halo2-axiom"]
 jemallocator = ["halo2-base/jemallocator"]
 mimalloc = ["halo2-base/mimalloc"]
 
